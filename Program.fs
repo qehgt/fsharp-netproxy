@@ -4,52 +4,46 @@ open System.Net
 open System.Text
 open System.Net.Sockets
 
-let toBytes (s : string) = Text.Encoding.ASCII.GetBytes s
-let printableChar c =
-    if c >= byte(' ') && c <= byte('~') 
-    then char(c).ToString()
-    else "."
+let printableByte b =
+    if b >= ' 'B && b <= '~'B
+    then b else '.'B
 
-let printableString (bs : byte[])  = 
-    String.init bs.Length (fun i -> printableChar bs.[i])
+let dump (bs : byte[]) offset =
+    let out = "00000000                                                  |                |\n"B
+    let ind1 = 7
+    let ind2 = 9
+    let indL = 59
 
-let hexDump (v : byte[]) = seq {
-    let len = 16
+    let conv i v =
+        let t = byte(i>>>(v*4) &&& 0x0Fu) + '0'B
+        if t > 0x39uy then t+7uy else t
+    let conv' i v = 
+        let t = byte(i>>>(v*4) &&& 0x0Fuy) + '0'B
+        if t > 0x39uy then t+7uy else t
 
-    let printChunk v (index : int) =
-        let sb = StringBuilder()
-        sb.AppendFormat("{0:X8} {1:s} {2:s} |{3:s}|\n",
-            index,
-            (BitConverter.ToString(v, index, len/2)),
-            (BitConverter.ToString(v, index+len/2, len/2)),
-            (printableString (v.[index..index+len-1]))
-            ) |> ignore
-            
-        sb.ToString()
-                         
-    for chunk in [0 .. len .. v.Length-len] do
-        yield printChunk v chunk |> toBytes 
+    for x in [0..ind1] do out.[ind1-x] <- conv (uint32 offset) x
+    let min = Math.Min(8, bs.Length - offset)
+    for x in [0..min-1] do 
+        out.[ind2+x*3+0] <- conv' bs.[x+offset] 1
+        out.[ind2+x*3+1] <- conv' bs.[x+offset] 0
+        out.[indL+x]     <- printableByte bs.[x+offset]
+    let min = Math.Min(16, bs.Length - offset)
+    for x in [8..min-1] do 
+        out.[ind2+1+x*3+0] <- conv' bs.[x+offset] 1
+        out.[ind2+1+x*3+1] <- conv' bs.[x+offset] 0
+        out.[indL+x]       <- printableByte bs.[x+offset]
 
-    if v.Length%len <> 0 then
-        let sb = StringBuilder()
-        let lastIndex = v.Length/len*len
-        let last = v.[lastIndex..]
-        let lastString = String.init last.Length (fun i -> printableChar last.[i])
-        let i1 = Math.Min(len/2-1, last.Length-1)
-        let i2 = Math.Min(len-1, last.Length-1)
+    out
 
-        sb.AppendFormat("{0:X8} {1,-23:s} {2,-23:s} |{3,-16:s}|\n", 
-            lastIndex,
-            (BitConverter.ToString last.[0..i1]),
-            (BitConverter.ToString [| for x in len/2..i2 -> last.[x] |]),
-            lastString) |> ignore
-        yield sb.ToString() |> toBytes 
-}
+let dump' (bs : byte[]) = seq {
+    for offset in [0..16..bs.Length-1] do
+    yield dump bs offset
+    }
 
-let toHumanReadable bs = 
-    Array.concat (hexDump bs)
+let toHumanReadable bs =
+    Array.concat (dump' bs)
 
-type S = Net.Sockets.NetworkStream
+type NS = Net.Sockets.NetworkStream
 
 type loggerMsg = Data of byte[] | Done of AsyncReplyChannel<unit>
 type Logger(logname : string, f) =
@@ -59,7 +53,7 @@ type Logger(logname : string, f) =
             let! msg = inbox.Receive()
             match msg with
             | Data d -> if isGood then
-                            let d' = f d 
+                            let d' = f d
                             do! file.AsyncWrite(d', 0, d'.Length)
                         return! loop isGood
             | Done r -> r.Reply()
@@ -77,7 +71,7 @@ type Logger(logname : string, f) =
         innerLoop.PostAndReply(fun replyChannel -> Done replyChannel)
         file.Close()
 
-let async_read (s : S) data = async {
+let async_read (s : NS) data = async {
     try
         let! data = s.AsyncRead(data, 0, data.Length)
         if data <> 0 then return Some data
@@ -86,8 +80,8 @@ let async_read (s : S) data = async {
         | :? ObjectDisposedException -> return None
     }
 
-let pass_through (rstm : S) (wstm : S) (log : Logger) (bin_log: Logger) = 
-    let data : byte[] = Array.zeroCreate (16*1024)
+let pass_through (rstm : NS) (wstm : NS) (log : Logger) (bin_log: Logger) = 
+    let data : byte[] = Array.zeroCreate (64*1024)
     let rec loop() = async {
         let! dataRead = async_read rstm data
         match dataRead with
@@ -119,7 +113,7 @@ let process_connection (client : TcpClient) n host port = async {
         let binr_log_name = sprintf "log-binary-%s-%04d-%s.log" (start_time.ToLongDateString()) n remote_info
         let binl_log_name = sprintf "log-binary-%s-%04d-%s.log" (start_time.ToLongDateString()) n local_info
         
-        let log     = Logger(log_name, toHumanReadable)
+        let log      = Logger(log_name, toHumanReadable)
         let binr_log = Logger (binr_log_name, id)
         let binl_log = Logger (binl_log_name, id)
         [pass_through (c.GetStream()) (remote.GetStream()) log binr_log;
@@ -151,7 +145,7 @@ let main() =
         s.Start()
         let rec loop n = 
             let c = s.AcceptTcpClient()
-            process_connection c n host port |> Async.StartImmediate
+            process_connection c n host port |> Async.Start
             loop (n + 1)
             ()
         loop 1
