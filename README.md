@@ -1,2 +1,1 @@
-fsharp-netproxy
-===============
+TCP/IP redirector. F# version.
