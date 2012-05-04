@@ -4,33 +4,34 @@ open System.Net
 open System.Text
 open System.Net.Sockets
 
-let printableByte b =
-    if b >= ' 'B && b <= '~'B
-    then b else '.'B
-
 let dump (bs : byte[]) offset =
     let out = "00000000                                                  |                |\n"B
     let ind1 = 7
     let ind2 = 9
     let indL = 59
 
-    let conv i v =
+    let inline printableByte b =
+        if b >= ' 'B && b <= '~'B
+        then b else '.'B
+
+    let inline conv i v =
         let t = byte(i>>>(v*4) &&& 0x0Fu) + '0'B
         if t > 0x39uy then t+7uy else t
-    let conv' i v = 
-        let t = byte(i>>>(v*4) &&& 0x0Fuy) + '0'B
+    let inline conv' i v =         
+        let t = if v then i &&& 0x0Fuy else ((i >>> 4) &&& 0x0Fuy)
+        let t' = t + '0'B
         if t > 0x39uy then t+7uy else t
 
-    for x in [0..ind1] do out.[ind1-x] <- conv (uint32 offset) x
+    for x = 0 to ind1 do out.[ind1-x] <- conv (uint32 offset) x
     let min = Math.Min(8, bs.Length - offset)
-    for x in [0..min-1] do 
-        out.[ind2+x*3+0] <- conv' bs.[x+offset] 1
-        out.[ind2+x*3+1] <- conv' bs.[x+offset] 0
+    for x = 0 to min-1 do 
+        out.[ind2+x*3+0] <- conv' bs.[x+offset] false
+        out.[ind2+x*3+1] <- conv' bs.[x+offset] true
         out.[indL+x]     <- printableByte bs.[x+offset]
     let min = Math.Min(16, bs.Length - offset)
-    for x in [8..min-1] do 
-        out.[ind2+1+x*3+0] <- conv' bs.[x+offset] 1
-        out.[ind2+1+x*3+1] <- conv' bs.[x+offset] 0
+    for x = 8 to min-1 do 
+        out.[ind2+1+x*3+0] <- conv' bs.[x+offset] false
+        out.[ind2+1+x*3+1] <- conv' bs.[x+offset] true
         out.[indL+x]       <- printableByte bs.[x+offset]
 
     out
